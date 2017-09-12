@@ -1,3 +1,4 @@
+// class that contains animatable elements
 var canvas = class Canvas {
     constructor() {
         this.elements = [];
@@ -52,7 +53,7 @@ class Element {
     }
 
     draw(animationTime) {
-        for (let motion of this.motions) if (!motion.move(animationTime, this.element)) this.remove(motion);
+        for (let motion of this.motions) if (!motion.move(animationTime)) this.remove(motion);
     }
 
     add_motion(motion) {
@@ -66,34 +67,46 @@ class Element {
 
 class Motion {
     constructor(args) {
-        this.start = ArgOrDefault(args.start, performance.now());
+        this.reset(args);
         this.duration = ArgOrDefault(args.duration, 1000);
-        this.repeat = ArgOrDefault(args.repeat, 0);
-        this.progress = 0;
-        this.end = start + duration;
         this.timing = FuncOrDefault(args.timing, Timing.linear());
-        this.moving = FuncOrDefault(args.moving, Moving.none());       
+        this.transform = FuncOrDefault(args.transform, Transform.none());       
         this.onStart = FuncOrDefault(args.onStart, function () { });
         this.onRepeat = FuncOrDefault(args.onEnd, function () { });
         this.onFinish = FuncOrDefault(args.onDone, function () { });
         this.onDraw = FuncOrDefault(args.onDraw, function () { });
     }
 
-    move(animationTime, element) {
-        if (animationTime < this.start) return true;
+    reset(args) {
+        this.start = ArgOrDefault(args.start, performance.now());
+        this.repeat = ArgOrDefault(args.repeat, 0);
+        this.progress = 0;
+        this.end = start + duration;
+        this.paused = false;
+        this.started = false;
+    }
+
+    move(animationTime) {
+        if (animationTime < this.start || paused) return true;
         if (animationTime >= this.end) {
-            if (this.repeat === 0) return false;
+            if (this.repeat === 0) {
+                this.onFinish();
+                return false;
+            }
             else {
                 if (this.repeat > 0) this.repeat--;
                 this.start = performance.now();
                 this.end = this.start + this.duration;
+                this.onRepeat();
             }
         }
-        this.movefunc(this.timing(this.progress));
-    }
-
-    progress() {
-        return (animationTime - this.start) / this.duration;
+        if (!this.started) {            
+            this.started = true;
+            this.onStart();
+        }
+        this.onDraw();
+        this.progress = Normalize((animationTime - this.start) / this.duration);
+        this.transform.step(this.timing(this.progress));
     }
 }
 
@@ -136,7 +149,24 @@ class Timing {
             return result;
         };
     }
-
+    // linear with smoothed start and end
+    static smooth() {
+        return function (progress) {
+            return (1 - Math.cos(progress * Math.PI)) / 2;
+        };
+    }
+    // linear with smoothed start
+    static smoothStart() {
+        return function (progress) {
+            return 1 - Math.cos(progress * Math.PI / 2);
+        };
+    }
+    // linear loop with smoothed transitions
+    static smoothLoop() {
+        return function (progress) {
+            return (1 - Math.cos(progress * 2 * Math.PI)) / 2;
+        };
+    }
     // ----- Modifiers -----
     // accepts a timing function, returns the EaseOut variant
     static easeOut(timing) {
@@ -151,14 +181,83 @@ class Timing {
             else return (2 - timing(2 * (1 - progress))) / 2;
         };
     }
-}
-
-class Moving {
-    static none() {
-        return function (progress, element) {
-            return;
+    // accepts a timing function, returns the Reverse variant
+    static reverse(timing) {
+        return function (progress) {
+            return timing(1 - progress);
         };
     }
+    // accepts a timing function, returns the forwardReverse variant
+    static forwardReverse(timing) {
+        return function (progress) {
+            if (progress < 0.5) return timing(2 * progress);
+            else return timing(2 - 2 * progress);
+        };
+    }
+}
+
+class Transform {
+    static none() {
+        return {
+            "step": function (progress) { }
+        };
+    }
+    static position_linear(args) {
+        return {
+            "start": args.start,
+            "end": args.end,
+            "current": args.current,
+            "step": function (progress) {
+                 this.current.lerp(this.start, this.end, progress);
+            }
+        };
+    }
+}
+
+class Vector2 {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    add(vector) {
+        return new Vector2(this.x + vector.x, this.y + vector.y);
+    }
+    subtract(vector) {
+        return new Vector2(this.x - vector.x, this.y - vector.y);
+    }
+    multiply(scalar) {       
+        return new Vector2(this.x * scalar, this.y * scalar);
+    }
+    divide(scalar) {
+        return new Vector2(this.x / scalar, this.y / scalar);
+    }
+    set(vector) {
+        this.x = vector.x;
+        this.y = vector.y;
+    }
+    log() {
+        console.log("Vector2: ( " + this.x + " , " + this.y + " )");
+    }
+    magnitude() {
+        return Math.hypot(this.x, this.y);
+    }
+    distance(vector) {
+        return Math.hypot(vector.x - this.x, vector.y - this.y);
+    }
+    lerp(start, end, progress) {
+        this.x = Lerp(start.x, end.x, progress);
+        this.y = Lerp(start.y, end.y, progress);
+    }
+}
+
+function Lerp(start, end, progress) {
+    return start + progress * (end - start);
+}
+
+function Normalize(num) {
+    if (num < 0) return 0;
+    else if (num > 1) return 1;
+    else return num;
 }
 
 function ArrayRemove(array, element) {
